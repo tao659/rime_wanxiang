@@ -131,6 +131,7 @@ lit	lit
 liz	liz
 lob	lob
 lug	lug
+lua	lua
 lund	lund
 lung	lung
 lux	lux
@@ -169,6 +170,7 @@ noun	noun
 nous	nous
 nun	nun
 nut	nut
+nas	nas
 nail	nail
 nash	nash
 pac	pac
@@ -273,4 +275,5 @@ won	won
 went	went
 yan	yan
 yen	yen
+yes	yes
 zach	zach

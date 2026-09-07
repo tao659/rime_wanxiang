@@ -19687,6 +19687,7 @@ doq	基于quic的dns
 dns over quic	基于quic的dns
 dor	多尔
 dora	朵拉
+dork	傻瓜
 dorado	剑鱼座
 dorcas	多加
 dorchester	多切斯特
@@ -61016,6 +61017,7 @@ subacid	微酸
 subacute	亚急性
 subaddress	子地址
 subaerial	陆上的
+subagent	子代理
 subagent	副代理
 subalphabaet	次字母表
 subalpine	亚高山

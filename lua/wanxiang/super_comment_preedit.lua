@@ -1,53 +1,93 @@
---@amzxyz https://github.com/amzxyz/rime-wanxiang
-
-
+-- @amzxyz https://github.com/amzxyz/rime-wanxiang
 local wanxiang = require('wanxiang/wanxiang')
+
+local SCHEME_CAPABILITIES = {
+    wanxiang_pro = {tone = true, aux = true, pro = true, lite = false, t9 = false},
+    wanxiang = {tone = true, aux = false, pro = false, lite = false, t9 = false},
+    wanxiang_lite = {tone = false, aux = false, pro = false, lite = true, t9 = false},
+    wanxiang_t9 = {tone = true, aux = false, pro = false, lite = false, t9 = true},
+    wanxiang_t9i = {tone = true, aux = false, pro = false, lite = false, t9 = true},
+}
+
+local COMMENT_CLEAR = 0
+local COMMENT_TONE = 1
+local COMMENT_TONELESS = 2
+local COMMENT_AUX = 3
+local COMMENT_NATIVE_TONELESS = 4
 
 local tone_map = {
     ['ā']='a', ['á']='a', ['ǎ']='a', ['à']='a',
     ['ē']='e', ['é']='e', ['ě']='e', ['è']='e',
     ['ī']='i', ['í']='i', ['ǐ']='i', ['ì']='i',
-    ['ō']='o', ['ó']='o', ['ǒ']='o', ['ò']='o', ['ň']='n',
-    ['ū']='u', ['ú']='u', ['ǔ']='u', ['ù']='u', ['ǹ']='n',
-    ['ǖ']='ü', ['ǘ']='ü', ['ǚ']='ü', ['ǜ']='ü', ['ń']='n',
+    ['ō']='o', ['ó']='o', ['ǒ']='o', ['ò']='o', ['ň']='en',
+    ['ū']='u', ['ú']='u', ['ǔ']='u', ['ù']='u', ['ǹ']='en',
+    ['ǖ']='ü', ['ǘ']='ü', ['ǚ']='ü', ['ǜ']='ü', ['ń']='en',
 }
 
 local function remove_pinyin_tone(s)
     local result = {}
     for uchar in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
-        table.insert(result, tone_map[uchar] or uchar)
+        result[#result + 1] = tone_map[uchar] or uchar
     end
     return table.concat(result)
+end
+
+local function escape_pattern_class(s)
+    return (s:gsub("([%%%^%[%]%-])", "%%%1"))
+end
+
+local function escape_pattern_literal(s)
+    return (s:gsub("([^%w])", "%%%1"))
+end
+
+local function normalize_comment_delimiter(comment, delimiter_pattern)
+    if not delimiter_pattern or not comment or comment == "" then return comment end
+    return (comment:gsub(delimiter_pattern, " "))
+end
+
+-- 只判断 UTF-8 字符数是否未超过上限。
+local function utf8_within(text, limit)
+    if not text or text == "" then return true end
+    if not limit or limit < 1 then return false end
+    local pos = utf8.offset(text, limit + 1)
+    return not pos or pos > #text
 end
 
 -- ----------------------
 -- # 错音错字提示模块
 -- ----------------------
 local CR = {}
-local corrections_cache = nil -- 用于缓存已加载的词典
-local cached_dict_path = nil  -- 记录当前缓存的词典路径
+local correction_dict_cache = {}
 
 function CR.init(env)
-    -- 动态获取样式，因为配置可能在运行时被修改，所以这个不放进缓存拦截里
-    CR.style = env.settings.corrector_type or '{comment}'
-    
+    local style = env.settings.corrector_type or "{comment}"
+    env.corrector_style_left, env.corrector_style_right = style:match("^(.-)comment(.-)$")
+
     local auto_delimiter = env.settings.auto_delimiter
-    local is_pro = wanxiang.is_pro_scheme(env)
-    -- 根据方案选择加载路径
-    local path = (is_pro and "dicts/cuoyin.pro.dict.yaml") or "dicts/cuoyin.dict.yaml"
-    
-    -- 如果缓存已经存在，并且文件路径没变，直接返回，不再读盘
-    if corrections_cache and cached_dict_path == path then
+    local path
+    if env.is_pro then
+        path = "dicts/cuoyin.pro.dict.yaml"
+    elseif env.is_lite then
+        path = "dicts/cuoyin.lite.dict.yaml"
+    else
+        path = "dicts/cuoyin.dict.yaml"
+    end
+    local cache_key = path .. "\0" .. auto_delimiter
+    local corrections = correction_dict_cache[cache_key]
+
+    if corrections then
+        env.corrections = corrections
         return
     end
 
     local file, close_file, err = wanxiang.load_file_with_fallback(path)
     if not file then
         log.error(string.format("[super_comment]: 加载失败 %s，错误: %s", path, err))
+        env.corrections = nil
         return
     end
-    
-    corrections_cache = {}
+
+    corrections = {}
     for line in file:lines() do
         if not line:match("^#") then
             local text, code, weight, comment = line:match("^(.-)\t(.-)\t(.-)\t(.-)$")
@@ -55,95 +95,125 @@ function CR.init(env)
                 text = text:match("^%s*(.-)%s*$")
                 code = code:match("^%s*(.-)%s*$")
                 comment = comment and comment:match("^%s*(.-)%s*$") or ""
-                comment = comment:gsub("%s+", auto_delimiter)
+                comment = comment:gsub("%s+", " ")
                 code = code:gsub("%s+", auto_delimiter)
-                corrections_cache[code] = { text = text, comment = comment }
+                corrections[code] = {text = text, comment = comment}
             end
         end
     end
     close_file()
-    
-    -- 记录本次成功加载的文件路径
-    cached_dict_path = path
+
+    correction_dict_cache[cache_key] = corrections
+    env.corrections = corrections
 end
 
-function CR.get_comment(cand)
-    local correction = corrections_cache and corrections_cache[cand.comment] or nil
+function CR.get_comment(cand, env)
+    local corrections = env.corrections
+    local correction = corrections and corrections[cand.comment] or nil
     if not (correction and cand.text == correction.text) then
         return nil
     end
-    -- 只认占位符 `comment`，按“刀法”切分
-    local tpl = CR.style or "comment"
-    local left, right = tpl:match("^(.-)comment(.-)$")
 
-    if left then
-        return left .. correction.comment .. right
-    else
-        return correction.comment
+    if env.corrector_style_left then
+        return env.corrector_style_left .. correction.comment .. env.corrector_style_right
     end
+
+    return correction.comment
 end
 -- ----------------------
 -- 部件组字返回的注释
 -- ----------------------
 local function get_charset_label(text)
-    if not text or text == "" then return nil end
+    if not text or text == "" then
+        return nil
+    end
     local cp = utf8.codepoint(text)
-    if not cp then return nil end
+    if not cp then
+        return nil
+    end
 
     -- 按照 Unicode 区块频率排序
-    if cp >= 0x4E00   and cp <= 0x9FFF  then return "基本" end
-    if cp >= 0x3400   and cp <= 0x4DBF  then return "扩A" end
-    if cp >= 0x20000  and cp <= 0x2A6DF then return "扩B" end
-    if cp >= 0x2A700  and cp <= 0x2B73F then return "扩C" end
-    if cp >= 0x2B740  and cp <= 0x2B81F then return "扩D" end
-    if cp >= 0x2B820  and cp <= 0x2CEAF then return "扩E" end
-    if cp >= 0x2CEB0  and cp <= 0x2EBEF then return "扩F" end
-    if cp >= 0x2EBF0  and cp <= 0x2EE5F then return "扩I" end
-    if cp >= 0x30000  and cp <= 0x3134F then return "扩G" end
-    if cp >= 0x31350  and cp <= 0x323AF then return "扩H" end
-    
+    if cp >= 0x4E00 and cp <= 0x9FFF then
+        return "基本"
+    end
+    if cp >= 0x3400 and cp <= 0x4DBF then
+        return "扩A"
+    end
+    if cp >= 0x20000 and cp <= 0x2A6DF then
+        return "扩B"
+    end
+    if cp >= 0x2A700 and cp <= 0x2B73F then
+        return "扩C"
+    end
+    if cp >= 0x2B740 and cp <= 0x2B81F then
+        return "扩D"
+    end
+    if cp >= 0x2B820 and cp <= 0x2CEAF then
+        return "扩E"
+    end
+    if cp >= 0x2CEB0 and cp <= 0x2EBEF then
+        return "扩F"
+    end
+    if cp >= 0x2EBF0 and cp <= 0x2EE5F then
+        return "扩I"
+    end
+    if cp >= 0x30000 and cp <= 0x3134F then
+        return "扩G"
+    end
+    if cp >= 0x31350 and cp <= 0x323AF then
+        return "扩H"
+    end
+
     -- 兼容区
-    if cp >= 0xF900   and cp <= 0xFAFF  then return "兼容" end
-    if cp >= 0x2F800  and cp <= 0x2FA1F then return "兼容" end
+    if cp >= 0xF900 and cp <= 0xFAFF then
+        return "兼容"
+    end
+    if cp >= 0x2F800 and cp <= 0x2FA1F then
+        return "兼容"
+    end
 
     return nil
 end
 
 local function get_az_comment(cand, env, initial_comment)
     local inner_parts = {}
-    
+
     -- 音形注释拆解逻辑
     if initial_comment and initial_comment ~= "" then
         local segments = {}
-        for segment in string.gmatch(initial_comment, "[^%s]+") do
-            table.insert(segments, segment)
+        for segment in initial_comment:gmatch(env.settings.comment_split_pattern) do
+            segments[#segments + 1] = segment
         end
-        
+
         if #segments > 0 then
-            local semicolon_count = select(2, string.gsub(segments[1], ";", ""))
+            local has_aux = env.has_aux
+            local semicolon_count = has_aux
+                and select(2, string.gsub(segments[1], ";", "")) or 0
             local pinyins = {}
             local fuzhu = nil
-            
+
             for _, segment in ipairs(segments) do
-                local pinyin = string.match(segment, "^[^;~]+")
+                local pinyin = has_aux
+                    and string.match(segment, "^[^;~]+")
+                    or string.match(segment, "^[^~]+")
                 local fz = nil
 
                 if semicolon_count == 1 then
                     fz = string.match(segment, ";(.+)$")
                 end
 
-                if pinyin then 
-                    table.insert(pinyins, pinyin) 
+                if pinyin then
+                    pinyins[#pinyins + 1] = pinyin
                 end
                 if not fuzhu and fz and fz ~= "" then fuzhu = fz end
             end
 
             if #pinyins > 0 then
                 local pinyin_str = table.concat(pinyins, ",")
-                table.insert(inner_parts, string.format("音%s", pinyin_str))
-                
+                inner_parts[#inner_parts + 1] = string.format("音%s", pinyin_str)
+
                 if fuzhu then
-                    table.insert(inner_parts, string.format("辅%s", fuzhu))
+                    inner_parts[#inner_parts + 1] = string.format("辅%s", fuzhu)
                 end
             end
         end
@@ -152,7 +222,7 @@ local function get_az_comment(cand, env, initial_comment)
     if cand and cand.text then
         local label = get_charset_label(cand.text)
         if label then
-            table.insert(inner_parts, label)
+            inner_parts[#inner_parts + 1] = label
         end
     end
 
@@ -163,131 +233,198 @@ local function get_az_comment(cand, env, initial_comment)
     return "〔" .. table.concat(inner_parts, "・") .. "〕"
 end
 -- ----------------------
--- # 辅助码提示或带调全拼注释模块 (Fuzhu)
+-- 辅助码与 preedit 处理
 -- ----------------------
-local function get_fz_comment(cand, env, initial_comment)
-    local length = utf8.len(cand.text)
-    if length > env.settings.candidate_length then
-        return ""
-    end
-    local auto_delimiter = env.settings.auto_delimiter or " "
-    local segments = {}
-    for segment in string.gmatch(initial_comment, "[^" .. auto_delimiter .. "]+") do
-        table.insert(segments, segment)
-    end
+local function strip_aux_comment(initial_comment, split_pattern)
+    if not initial_comment or initial_comment == "" then return "" end
 
-    -- 根据 option 动态决定是否强制使用 tone
-    local use_tone = env.engine.context:get_option("tone_hint") or env.engine.context:get_option("toneless_hint")
-    local fuzhu_type = use_tone and "tone" or "fuzhu"
+    local first_segment = initial_comment:match(split_pattern) or ""
+    if not first_segment:find(";", 1, true) then return initial_comment end
 
-    local first_segment = segments[1] or ""
-    local semicolon_count = select(2, first_segment:gsub(";", ""))
-    local fuzhu_comments = {}
-    -- 没有分号的情况
-    if semicolon_count == 0 then
-        return initial_comment:gsub(auto_delimiter, " ")
-    else
-        -- 有分号：按类型提取
-        for _, segment in ipairs(segments) do
-            if fuzhu_type == "tone" then
-                -- 取第一个分号“前”的内容
-                local before = segment:match("^(.-);")
-                if before and before ~= "" then
-                    table.insert(fuzhu_comments, before)
-                end
-            else -- "fuzhu"
-                -- 取第一个分号“后”的内容（到行尾）
-                local after = segment:match(";(.+)$")
-                if after and after ~= "" then
-                    table.insert(fuzhu_comments, after)
-                end
-            end
-        end
-    end
-
-    -- 最终拼接输出，fuzhu用 `,`，tone用 /连接
-    if #fuzhu_comments > 0 then
-        if fuzhu_type == "tone" then
-            return table.concat(fuzhu_comments, " ")
-        else
-            return table.concat(fuzhu_comments, "/")
-        end
-    else
-        return ""
-    end
+    return (initial_comment:gsub(split_pattern, function(segment)
+        return segment:match("^(.-);") or ""
+    end))
 end
 
--- 对 cand.preedit 应用 tone_preedit/0..9 的映射（数字 -> 上标等）
--- 对 cand.preedit 应用转换：数字转上标，且隐藏双大写辅助码
-local function apply_tone_preedit(env, cand)
-    if not cand or not cand.preedit or cand.preedit == "" then
-        return
+local function get_aux_comment(env, initial_comment)
+    if not initial_comment or initial_comment == "" then return "" end
+
+    local first_segment = initial_comment:match(env.settings.comment_split_pattern) or ""
+    if not first_segment:find(";", 1, true) then return initial_comment end
+
+    local parts = {}
+    for segment in initial_comment:gmatch(env.settings.comment_split_pattern) do
+        local aux = segment:match(";(.+)$")
+        if aux and aux ~= "" then parts[#parts + 1] = aux end
     end
 
-    local engine = env.engine
-    local ctx = engine and engine.context
-    local input = ctx and ctx.input or ""
-    local is_t9_key = input:match("^%d") ~= nil
+    return #parts > 0 and table.concat(parts, "/") or ""
+end
 
-    -- 如果是九键场景，或者包含连续数字（如电脑小键盘），直接跳过不转换
-    if is_t9_key or input:match("%d%d") then return end
+local function apply_aux_preedit(env, cand)
+    local preedit = cand.preedit
+    local aux_symbol = env.settings.aux_symbol
+    if not preedit or preedit == "" or not aux_symbol or aux_symbol == "" then return end
+    if not preedit:find("[A-Z][A-Z]") then return end
+    if cand.text:match("^[%a%p%s]+$") then return end
 
-    -- 判断首选是否为纯英文（通过匹配是否全由英文字符组成且不含中文）
-    if cand.text:match("^[%a%p%s]+$") then
-        return
-    end
+    local converted = preedit:gsub("^(..?-?)([A-Z][A-Z]+)", function(prefix, upper)
+        if prefix:match("[A-Z]") then return prefix .. upper end
+        return prefix .. aux_symbol
+    end)
 
-    -- 加载配置
-    local cfg = engine and engine.schema and engine.schema.config
-    local aux_symbol = cfg and cfg:get_string("force_upper_aux/symbol")
-    
-    -- 如果没配置 symbol，直接跳过大写转换逻辑
-    if not aux_symbol or aux_symbol == "" then
-        goto tone_only
-    end
+    cand.preedit = converted:gsub("([^%s%^])([A-Z][A-Z]+)", function(prev)
+        return prev .. aux_symbol
+    end)
+end
 
-    do
-        local preedit = cand.preedit
-        -- 排除前两位是大写的情况，只转换后续出现的双大写
-        -- ([A-Z][A-Z]+) 匹配后续连续的两个及以上的大写字母。
-        local converted = preedit:gsub("^(..?-?)([A-Z][A-Z]+)", function(prefix, upper)
-            -- 检查前缀是否包含大写字母。如果前缀里有大写，说明可能是英文输入，不转换。
-            if prefix:match("[A-Z]") then
-                return prefix .. upper
-            else
-                return prefix .. aux_symbol
-            end
-        end)
+local function apply_tone_digits(env, cand)
+    local preedit = cand.preedit
+    if not preedit or preedit == "" or not preedit:find("%d") then return end
+    if cand.text:match("^[%a%p%s]+$") then return end
 
-        -- 处理非行首（音节中间或靠后）的双大写
-        -- 比如 "nihaoWS" -> "nihao·"
-        converted = converted:gsub("([^%s%^])([A-Z][A-Z]+)", function(prev, upper)
-            return prev .. aux_symbol
-        end)
-
-        cand.preedit = converted
-    end
-    ::tone_only::
-    -- 数字映射逻辑 (上标转换)
-    if not env.tone_map then
-        env.tone_map = {}
-        if cfg then
-            for d = 0, 9 do
-                local k = tostring(d)
-                local v = cfg:get_string("tone_preedit/" .. k)
-                env.tone_map[k] = (v and v ~= "") and v or k
-            end
-        end
-    end
-
-    local final_pre = cand.preedit:gsub("([^%d%s]+)(%d+)", function(body, digits)
+    cand.preedit = preedit:gsub("([^%d%s]+)(%d+)", function(body, digits)
         local mapped = digits:gsub("%d", function(d)
             return env.tone_map[d] or d
         end)
         return body .. mapped
     end)
-    
-    cand.preedit = final_pre
+end
+
+-- 按自动、手动分隔符拆分 preedit，并保留分隔符原位。
+local function split_preedit_parts(preedit, auto_delimiter, manual_delimiter)
+    local parts = {}
+    local current_segment = ""
+
+    for char in preedit:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+        if char == auto_delimiter or char == manual_delimiter then
+            if current_segment ~= "" then
+                parts[#parts + 1] = current_segment
+                current_segment = ""
+            end
+            parts[#parts + 1] = char
+        else
+            current_segment = current_segment .. char
+        end
+    end
+
+    if current_segment ~= "" then
+        parts[#parts + 1] = current_segment
+    end
+
+    return parts
+end
+
+-- 从候选注释中提取与 preedit 音节一一对应的拼音。
+local function extract_pinyin_segments(initial_comment, split_pattern, has_aux)
+    local pinyins = {}
+
+    for segment in initial_comment:gmatch(split_pattern) do
+        local pinyin = has_aux and segment:match("^[^;]+") or segment
+        pinyins[#pinyins + 1] = pinyin:gsub("[%[%]]", "")
+    end
+
+    return pinyins
+end
+
+-- 取得真实拼音的显示声母；zh/ch/sh 优先使用完整声母。
+local function get_display_initial(py)
+    if not py or py == "" then return "" end
+
+    local normalized = remove_pinyin_tone(py):lower()
+    local prefix = normalized:sub(1, 2)
+    if prefix == "zh" or prefix == "ch" or prefix == "sh" then
+        return prefix
+    end
+
+    return py:match("[%z\1-\127\194-\244][\128-\191]*") or ""
+end
+
+-- false：简码保留；true：简码直接转换为完整拼音。
+local function render_abbreviation(typed, py, should_convert)
+    if should_convert then return py end
+
+    local initial = get_display_initial(py)
+    if initial == "zh" or initial == "ch" or initial == "sh" then
+        return initial
+    end
+
+    return typed
+end
+
+local function is_alpha_abbreviation(part, state)
+    if part:match("^[%a]$") then return true end
+
+    local lower = part:lower()
+    if lower ~= "zh" and lower ~= "ch" and lower ~= "sh" then
+        return false
+    end
+    return not state.input_method_type or state.input_method_type == "pinyin"
+end
+
+-- T9 优先处理：单数字是简码，多数字音节直接转换为完整拼音。
+local function convert_t9_syllable(part, py, state)
+    if state.is_pro or not part:match("^%d$") then return py end
+
+    local typed = get_display_initial(py)
+    if typed == "" then return part end
+    return render_abbreviation(
+        typed, py, state.convert_abbrev_preedit
+    )
+end
+
+-- 26键处理：简码按配置保留或转全拼，其他音节维持原有转换语义。
+local function convert_alpha_syllable(part, py, state)
+    if state.is_pro then return py end
+
+    if is_alpha_abbreviation(part, state) then
+        return render_abbreviation(
+            part, py, state.convert_abbrev_preedit
+        )
+    end
+
+    local _, tone = part:match("([%a]+)([^%a]+)")
+    if state.tone_isolate then return py .. (tone or "") end
+    return py
+end
+
+-- 单音节转换总入口：T9 优先，再进入26键处理。
+local function convert_preedit_syllable(part, py, state)
+    if state.is_t9 then
+        return convert_t9_syllable(part, py, state)
+    end
+
+    return convert_alpha_syllable(part, py, state)
+end
+
+-- 完成 preedit 拆分、拼音对齐、逐音节转换和最终去声调。
+local function convert_preedit(preedit, initial_comment, state)
+    local parts = split_preedit_parts(
+        preedit, state.auto_delimiter, state.manual_delimiter
+    )
+    local pinyins = extract_pinyin_segments(
+        initial_comment, state.comment_split_pattern, state.has_aux
+    )
+    local pinyin_index = 1
+
+    for i, part in ipairs(parts) do
+        if part ~= state.auto_delimiter
+            and part ~= state.manual_delimiter
+        then
+            local py = pinyins[pinyin_index]
+            if py then
+                parts[i] = convert_preedit_syllable(part, py, state)
+            end
+            pinyin_index = pinyin_index + 1
+        end
+    end
+
+    local result = table.concat(parts)
+    if state.is_full_pinyin and state.has_tone then
+        result = remove_pinyin_tone(result)
+    end
+
+    return result
 end
 
 -- ----------------------
@@ -296,223 +433,209 @@ end
 local ZH = {}
 function ZH.init(env)
     local config = env.engine.schema.config
+    local schema_id = env.engine.schema.schema_id or "wanxiang"
+    local caps = SCHEME_CAPABILITIES[schema_id] or SCHEME_CAPABILITIES.wanxiang
     local delimiter = config:get_string('speller/delimiter') or " '"
     local auto_delimiter = delimiter:sub(1, 1)
     local manual_delimiter = delimiter:sub(2, 2)
+    local escaped_delimiters = escape_pattern_class(delimiter)
+    local convert_abbrev_preedit = config:get_bool("super_comment/convert_abbrev_preedit")
+    if convert_abbrev_preedit == nil then convert_abbrev_preedit = false end
+
+    env.has_tone = caps.tone
+    env.has_aux = caps.aux
+    env.is_pro = caps.pro
+    env.is_lite = caps.lite
+    env.is_t9 = caps.t9
+    env.input_method_type = nil
+
+    if not env.is_t9 and wanxiang.get_input_method_type then
+        env.input_method_type = wanxiang.get_input_method_type(env)
+    end
+
     env.settings = {
-        delimiter = delimiter,
         auto_delimiter = auto_delimiter,
         manual_delimiter = manual_delimiter,
-        corrector_enabled = config:get_bool("super_comment/corrector") or true,
+        comment_delimiter_pattern = auto_delimiter ~= " "
+            and escape_pattern_literal(auto_delimiter) or nil,
         corrector_type = config:get_string("super_comment/corrector_type") or "{comment}",
-        candidate_length = tonumber(config:get_string("super_comment/candidate_length")) or 1,
+        candidate_length = tonumber(
+            config:get_string("super_comment/candidate_length")
+        ) or 1,
+        convert_abbrev_preedit = convert_abbrev_preedit,
+        comment_split_pattern = "[^" .. escaped_delimiters .. "]+",
     }
+
+    if env.has_aux then
+        env.settings.aux_symbol = config:get_string("force_upper_aux/symbol")
+    end
+
+    if env.has_tone then
+        env.settings.tone_isolate = config:get_bool("super_comment/tone_isolate")
+    end
+
+    env.tone_map = nil
+    if env.has_tone and not env.is_t9 then
+        env.tone_map = {}
+        for d = 0, 9 do
+            local key = tostring(d)
+            local value = config:get_string("tone_preedit/" .. key)
+            env.tone_map[key] = value and value ~= "" and value or key
+        end
+    end
 
     CR.init(env)
 end
+
 function ZH.fini(env)
+    env.settings = nil
+    env.input_method_type = nil
+    env.tone_map = nil
+    env.corrections = nil
+    env.corrector_style_left = nil
+    env.corrector_style_right = nil
+    env.has_tone = nil
+    env.has_aux = nil
+    env.is_pro = nil
+    env.is_lite = nil
+    env.is_t9 = nil
 end
+
 function ZH.func(input, env)
-    local config = env.engine.schema.config
     local context = env.engine.context
+    local settings = env.settings
+    local has_tone = env.has_tone
+    local has_aux = env.has_aux
+    local is_t9 = env.is_t9
+    local is_pro = env.is_pro
     local input_str = context.input or ""
-    local is_t9_key = input_str:match("^%d") ~= nil
     local is_radical_mode = wanxiang.is_in_radical_mode(env)
-    local schema_id = env.engine.schema.schema_id or ""
-    local is_wanxiang_pro = (schema_id == "wanxiang_pro")
-    local should_skip_candidate_comment = wanxiang.is_function_mode_active(context) or input_str == ""
-    local is_tone_comment = env.engine.context:get_option("tone_hint")
-    local is_toneless_comment = env.engine.context:get_option("toneless_hint")
-    local is_comment_hint = env.engine.context:get_option("fuzhu_hint")
-    --preedit相关声明
-    local delimiter = env.settings.delimiter
-    local auto_delimiter = env.settings.auto_delimiter
-    local manual_delimiter = env.settings.manual_delimiter
-    local visual_delim = config:get_string("speller/visual_delimiter") or " "
-    local tone_isolate = config:get_bool("speller/tone_isolate")
-    local is_tone_display = context:get_option("tone_display")
-    local is_full_pinyin = context:get_option("full_pinyin")
+    local skip_comment = input_str == "" or wanxiang.is_function_mode(context)
+
+    local preedit_state = nil
+    if not is_radical_mode then
+        local is_full_pinyin = context:get_option("full_pinyin")
+        local is_tone_display = has_tone and context:get_option("tone_display") or false
+
+        if is_full_pinyin or is_tone_display then
+            preedit_state = {
+                is_t9 = is_t9,
+                is_pro = is_pro,
+                has_tone = has_tone,
+                has_aux = has_aux,
+                input_method_type = env.input_method_type,
+                is_full_pinyin = is_full_pinyin,
+                tone_isolate = settings.tone_isolate,
+                convert_abbrev_preedit = settings.convert_abbrev_preedit,
+                auto_delimiter = settings.auto_delimiter,
+                manual_delimiter = settings.manual_delimiter,
+                comment_split_pattern = settings.comment_split_pattern,
+            }
+        end
+    end
+
+    local comment_mode = COMMENT_CLEAR
+    if not skip_comment and not is_radical_mode then
+        if has_aux and context:get_option("fuzhu_hint") then
+            comment_mode = COMMENT_AUX
+        elseif has_tone then
+            if context:get_option("tone_hint") then
+                comment_mode = COMMENT_TONE
+            elseif context:get_option("toneless_hint") then
+                comment_mode = COMMENT_TONELESS
+            end
+        elseif context:get_option("toneless_hint") then
+            comment_mode = COMMENT_NATIVE_TONELESS
+        end
+    end
+
+    local candidate_length = settings.candidate_length
+    local comment_split_pattern = settings.comment_split_pattern
+    local comment_delimiter_pattern = settings.comment_delimiter_pattern
 
     for cand in input:iter() do
         local genuine_cand = cand:get_genuine()
-        if genuine_cand.type == "shijian" then
+        local cand_type = genuine_cand.type
+        if cand_type == "shijian"
+            or cand_type == "compose"
+            or cand_type == "super_sym"
+            or cand_type == "super_emoji"
+            or cand_type == "url"
+            or cand_type == "version"
+        then
             yield(genuine_cand)
             goto continue
         end
-        local preedit = genuine_cand.preedit or ""
+
         local initial_comment = genuine_cand.comment
-        local final_comment = initial_comment
 
-        -- preedit相关处理只跳过 preedit，不影响注释
-        if is_radical_mode then
-            goto after_preedit
+        if preedit_state and initial_comment and initial_comment ~= "" then
+            genuine_cand.preedit = convert_preedit(
+                genuine_cand.preedit or "", initial_comment, preedit_state
+            )
         end
-        if not is_tone_display and not is_full_pinyin then
-            goto after_preedit
-        end
-        if (not initial_comment or initial_comment == "") then
-            goto after_preedit
-        end
-        do
-            -- 拆分逻辑
-            local input_parts = {}
-            local current_segment = ""
-            for char in preedit:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
-                if char == auto_delimiter or char == manual_delimiter then
-                    if #current_segment > 0 then
-                        table.insert(input_parts, current_segment)
-                        current_segment = ""
-                    end
-                    table.insert(input_parts, char)
-                else
-                    current_segment = current_segment .. char
-                end
-            end
-            if #current_segment > 0 then
-                table.insert(input_parts, current_segment)
-            end
 
-            -- 拆分拼音段（comment）
-            local pinyin_segments = {}
-            for segment in string.gmatch(initial_comment, "[^" .. auto_delimiter .. manual_delimiter .. "]+") do
-                local pinyin = segment:match("^[^;]+")
-                if pinyin then
-                    pinyin = pinyin:gsub("[%[%]]", "")  --去掉英文词库编码中的[]
-                    table.insert(pinyin_segments, pinyin)
-                end
-            end
-
-            -- 替换逻辑
-            local pinyin_index = 1
-            for i, part in ipairs(input_parts) do
-                if part == auto_delimiter or part == manual_delimiter then
-                    input_parts[i] = visual_delim
-                else
-                    local py = pinyin_segments[pinyin_index]
-
-                    if py then
-                        if is_t9_key then
-                            -- 场景 A：九宫格 (T9) 数字输入逻辑
-                            local py_first_char = py:match("[%z\1-\127\194-\244][\128-\191]*") or ""
-                            local part_offset = utf8.offset(part, 2)
-                            local part_tail = part_offset and part:sub(part_offset) or ""
-                            part = py_first_char .. part_tail
-
-                            if is_wanxiang_pro then
-                                input_parts[i] = py
-                                pinyin_index = pinyin_index + 1
-                            elseif i == #input_parts and #part == 1 then
-                                local prefix = py:sub(1, 2)
-                                local first_char = part:sub(1,1):lower()
-                                if first_char == "s" or first_char == "c" or first_char == "z" then
-                                    input_parts[i] = part
-                                else
-                                    if prefix == "zh" or prefix == "ch" or prefix == "sh" then
-                                        input_parts[i] = prefix
-                                    else
-                                        input_parts[i] = part
-                                    end
-                                end
-                            else
-                                input_parts[i] = py 
-                                pinyin_index = pinyin_index + 1
-                            end
-
-                        else
-                            -- 场景 B：常规 26键 字母输入逻辑
-                            local body, tone = part:match("([%a]+)([^%a]+)") 
-
-                            if is_wanxiang_pro then
-                                input_parts[i] = py
-                                pinyin_index = pinyin_index + 1
-                            elseif i == #input_parts and #part == 1 then
-                                local prefix = py:sub(1, 2)
-                                local first_char = part:sub(1,1):lower()
-                                if first_char == "s" or first_char == "c" or first_char == "z" then
-                                    input_parts[i] = part
-                                else
-                                    if prefix == "zh" or prefix == "ch" or prefix == "sh" then
-                                        input_parts[i] = prefix
-                                    else
-                                        input_parts[i] = part
-                                    end
-                                end
-                            else
-                                if tone_isolate then
-                                    input_parts[i] = py .. (tone or "")
-                                else
-                                    input_parts[i] = py
-                                end
-                                pinyin_index = pinyin_index + 1
-                            end
-                        end
-                    end
-                end
-            end
-
-            if is_full_pinyin then
-                for idx, part in ipairs(input_parts) do
-                    input_parts[idx] = remove_pinyin_tone(part)
-                end
-            end
-
-            genuine_cand.preedit = table.concat(input_parts)
-        end
-        ::after_preedit::
-        if should_skip_candidate_comment then
+        if skip_comment then
             yield(genuine_cand)
             goto continue
         end
-        apply_tone_preedit(env, genuine_cand)
-        -- 进入注释处理阶段
-        -- ① 辅助码注释或者声调注释
-        if initial_comment and (string.find(initial_comment, "~") or string.find(initial_comment, "\226\152\175") or cand.type == "shijian" or cand.type == "cnen") then
+
+        if not is_t9 then
+            if has_aux then apply_aux_preedit(env, genuine_cand) end
+            if has_tone then apply_tone_digits(env, genuine_cand) end
+        end
+
+        if is_radical_mode then
+            genuine_cand.comment = normalize_comment_delimiter(
+                get_az_comment(cand, env, initial_comment),
+                comment_delimiter_pattern
+            )
+            yield(genuine_cand)
+            goto continue
+        end
+
+        local final_comment
+        if initial_comment and initial_comment:find("~", 1, true) then
             final_comment = initial_comment
-            
-        -- 2. 常规的辅助码提示模式
-        elseif is_comment_hint then
-            local fz_comment = get_fz_comment(cand, env, initial_comment)
-            if fz_comment then
-                final_comment = fz_comment
+        elseif comment_mode ~= COMMENT_CLEAR
+            and utf8_within(cand.text, candidate_length)
+        then
+            if comment_mode == COMMENT_AUX then
+                final_comment = get_aux_comment(env, initial_comment)
+            elseif comment_mode == COMMENT_TONE then
+                if has_aux then
+                    final_comment = strip_aux_comment(
+                        initial_comment, comment_split_pattern
+                    )
+                else
+                    final_comment = initial_comment or ""
+                end
+            elseif comment_mode == COMMENT_TONELESS then
+                if has_aux then
+                    final_comment = remove_pinyin_tone(strip_aux_comment(
+                        initial_comment, comment_split_pattern
+                    ))
+                else
+                    final_comment = remove_pinyin_tone(initial_comment or "")
+                end
+            else
+                final_comment = initial_comment or ""
             end
-            
-        -- 3. 常规的带调拼音模式
-        elseif is_tone_comment then
-            local fz_comment = get_fz_comment(cand, env, initial_comment)
-            if fz_comment then
-                final_comment = fz_comment
-            end
-            
-        -- 4. 常规的无调拼音模式
-        elseif is_toneless_comment then
-            local fz_comment = get_fz_comment(cand, env, initial_comment)
-            if fz_comment then
-                -- 获取到带调拼音后，调用 remove_pinyin_tone 去掉声调
-                final_comment = remove_pinyin_tone(fz_comment)
-            end
-            
-        -- 5. 其他情况一律清空注释
         else
             final_comment = ""
         end
 
-        -- ② 错音错字提示
-        if env.settings.corrector_enabled then
-            local cr_comment = CR.get_comment(cand)
-            if cr_comment and cr_comment ~= "" then
-                final_comment = cr_comment
+        if initial_comment and initial_comment ~= "" then
+            local correction = CR.get_comment(cand, env)
+            if correction and correction ~= "" then
+                final_comment = correction
             end
         end
 
-        -- ③ 反查模式提示
-        if is_radical_mode then
-            local az_comment = get_az_comment(cand, env, initial_comment)
-            if az_comment and az_comment ~= "" then
-                final_comment = az_comment
-            end
-        end
+        final_comment = normalize_comment_delimiter(
+            final_comment, comment_delimiter_pattern
+        )
 
-        -- 应用注释
         if final_comment ~= initial_comment then
             genuine_cand.comment = final_comment
         end

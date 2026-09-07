@@ -4,7 +4,7 @@
 
 **重塑 Rime 生态，带来极致的输入体验。**
 
-[![快速上手](https://img.shields.io/badge/🚀_快速上手-探索文档-4CAF50?style=for-the-badge)](https://amzxyz.github.io/)
+[![快速上手](https://img.shields.io/badge/🚀_快速上手-探索文档-4CAF50?style=for-the-badge)](https://amzxyz.github.io/rime-wanxiang/)
 [![GitHub](https://img.shields.io/badge/⭐_GitHub_仓库-访问主页-2ea44f?style=for-the-badge)](https://github.com/amzxyz/rime-wanxiang)
 <br>
 [![License: CC BY 4.0](https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
@@ -40,14 +40,14 @@
       <div style="border: 1px solid #546e7a4d; border-radius: 12px; padding: 20px;">
         <h3>🚀 快速上手</h3>
         <p>从零开始，为您在 Windows、macOS 以及 iOS/Android 移动端部署万象。</p>
-        <a href="https://amzxyz.github.io/doc/intro"><strong>➡️ 立即安装</strong></a>
+        <a href="https://amzxyz.github.io/rime-wanxiang/doc/intro"><strong>➡️ 立即安装</strong></a>
       </div>
     </td>
     <td width="50%" valign="top">
       <div style="border: 1px solid #546e7a4d; border-radius: 12px; padding: 20px;">
         <h3>⌨️ 核心输入体系</h3>
         <p>深入解析万象独特的“带调拼音标注”、强大的辅码系统（小鹤、自然码等）以及中英混输机制。</p>
-        <a href="https://amzxyz.github.io/doc/aux_code"><strong>➡️ 了解核心</strong></a>
+        <a href="https://amzxyz.github.io/rime-wanxiang/doc/aux_code"><strong>➡️ 了解核心</strong></a>
       </div>
     </td>
   </tr>
@@ -55,15 +55,15 @@
     <td width="50%" valign="top">
       <div style="border: 1px solid #546e7a4d; border-radius: 12px; padding: 20px;">
         <h3>🪄 Lua 魔法扩展</h3>
-        <p>计算器、超级注释、符号包裹、动态时间戳... 探索让 Rime 拥有“超能力”的数十种微创新脚本。</p>
-        <a href="https://amzxyz.github.io/doc/shijian"><strong>➡️ 探索魔法</strong></a>
+        <p>计算器、超级注释、符号包裹、动态时间戳、超级符号库（按名输入数千 Unicode 符号）... 探索让 Rime 拥有“超能力”的数十种微创新脚本。</p>
+        <a href="https://amzxyz.github.io/rime-wanxiang/doc/shijian"><strong>➡️ 探索魔法</strong></a>
       </div>
     </td>
     <td width="50%" valign="top">
       <div style="border: 1px solid #546e7a4d; border-radius: 12px; padding: 20px;">
         <h3>⚙️ 词库与模型</h3>
         <p>深度解析万象的现代数据工程。算一笔隐形的“时间账”，彻底告别低效的候选翻页，让输入如呼吸般自然。</p>
-        <a href="https://amzxyz.github.io/doc/dict_gram"><strong>➡️ 揭秘底层逻辑</strong></a>
+        <a href="https://amzxyz.github.io/rime-wanxiang/doc/dict_gram"><strong>➡️ 揭秘底层逻辑</strong></a>
       </div>
     </td>
   </tr>
@@ -71,20 +71,31 @@
 
 ---
 
-## 💎 标准版 vs 增强版
+## 💎 四种版本，怎么选？
 
-万象提供两个主要版本，请根据您的输入习惯选择。为了获得最佳体验，**请务必了解您所选版本的特性**：
+万象目前提供 **Base / Pro / Lite / Pure** 四种发行方案。  
+它们共享万象的核心数据体系，但在 **功能完整度、辅助码、Lua 扩展与运行环境** 上各有侧重。
 
 
-| 特性对比 <img width="180" style="display:none;" /> | 🟢 标准版 (Base) <img width="340" style="display:none;" /> | 🔵 增强版 (Pro) <img width="340" style="display:none;" /> |
-| :--- | :--- | :--- |
-| **适用人群** | 新手、全拼用户、追求省心的双拼用户 | 硬核双拼用户、重度辅码与造词需求者 |
-| **方案文件** | `wanxiang.schema.yaml` | `wanxiang_pro.schema.yaml` |
-| **支持类型** | 全拼、任意双拼 | **仅支持双拼** |
-| **自动调频** | 默认开启 | **默认关闭** (精准控制) |
-| **用户词记录** | 自动记录，无差别积累 | 手动/无感造词，词库绝对可控 |
-| **辅助码支持** | 仅基于声调的辅助 | **8 种辅助码可选** + 声调辅助 |
-| **全场景辅筛** | 支持两分、多分、笔画、声调 | 全面支持 + 专属辅助码筛选 |
+
+|  | 🟢 **Base** | 🔵 **Pro** | 🟡 **Lite** | ⚪ **Pure** |
+| :--- | :--- | :--- | :--- | :--- |
+| **定位** | 完整标准版 | 双拼 / 辅助码增强版 | 轻量现代版 | 原生兼容版 |
+| **适合谁** | 全拼、双拼及绝大多数用户 | 重度双拼、辅助码与精细控制用户 | 希望减少重型功能的日常用户 | 老系统、旧 Rime、无 Lua 环境 |
+| **输入方式** | 全拼 + 双拼 | 双拼 + 多套辅助码 | 全拼 + 双拼 | 全拼 + 双拼 |
+| **词库** | 完整带调万象词库 | 独立 Pro 辅助码词库 | 无声调 Lite 词库 | Pure 专用轻量入口 |
+| **Lua 扩展** | ✅ 完整 | ✅ 完整增强 | 🟡 保留常用、裁剪重模块 | ❌ 不携带 Lua |
+| **典型特点** | 功能全面，开箱即用 | 辅码、造词、筛选能力最强 | 更轻、更少依赖 | 最大化兼容性 |
+| **主方案文件** | `wanxiang.schema.yaml` | `wanxiang_pro.schema.yaml` | `wanxiang_lite.schema.yaml` | `wanxiang_pure.schema.yaml` |
+
+### 一句话推荐
+
+- 🟢 **Base**：默认首选，第一次使用万象直接装它。
+- 🔵 **Pro**：明确知道自己需要双拼辅助码、造词或更强筛选能力时选择。
+- 🟡 **Lite**：喜欢 Base 的整体体验，但不需要预测、声调、复杂造词等重型功能。
+- ⚪ **Pure**：优先考虑兼容性，适合 Win7、fcitx4-rime 或无法运行 Lua 的环境。
+
+> 更完整的功能差异与选型说明，请查看 [万象拼音文档](https://amzxyz.github.io/rime-wanxiang/)。
 
 ---
 
@@ -93,6 +104,8 @@
 [薄荷拼音](https://github.com/Mintimate/oh-my-rime) :使用万象词库的综合性方案，特别是其修改的地球拼音能够继承万象的词库声调编码。
 
 [鸢鸣万象](https://github.com/yuanz-12/wanxiang_yoemin) :一个基于万象拼音生态融合李氏三拼与辅助码能力的手机用方案。
+
+[李氏三拼](https://github.com/arsenali/rime-triple-pinyin-lssp) :一个使用万象声调词库驱动的原创型特殊布局手机用方案。
 
 [万象虎](https://github.com/zhhwux/wxzhh) : 一个基于万象生态的虎码整句方案。
 
@@ -104,9 +117,7 @@
          <strong>如果觉得项目好用，欢迎在 GitHub 为我们点亮 Star！</strong>
     </p>
     <p style="margin-top: 0.5rem; color: #555;">
-        <strong>☕ 感谢您的赞赏与支持</strong>
-    </p>
     <p style="margin-top: 0.5rem; opacity: 0.8;">
-        <i>用更现代的数据，接管你的候选词。</i>
+        <i>用更优质的数据，接管你的候选词。</i>
     </p>
 </div>

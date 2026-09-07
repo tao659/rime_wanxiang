@@ -40,11 +40,16 @@ local function get_script_text_parts(ctx)
     return parts
 end
 
+-- 首次实际查询辅助码时再创建反查对象
+local function get_dict(env)
+    if not env.dict then env.dict = ReverseLookup(env.dict_name) end
+    return env.dict
+end
+
 -- 查询辅助码
 local function lookup_aux_code(env, char)
-    if not env.dict then return "" end 
     if env.aux_cache[char] then return env.aux_cache[char] end
-    local raw_code = env.dict:lookup(char)
+    local raw_code = get_dict(env):lookup(char)
     if not raw_code or raw_code == "" then return "" end
     local aux_part = raw_code:match(";([^,]+)") or raw_code:match("^([^;]+)") or ""
     local final_code = aux_part:gsub("[^a-zA-Z]", ""):sub(1, 2):upper()
@@ -57,7 +62,8 @@ function ForceUpperAux.init(env)
     local config = env.engine.schema.config
     env.trigger_key = config:get_string("force_upper_aux/hotkey") or "Tab"
     env.aux_cache = {}
-    env.dict = ReverseLookup(config:get_string("translator/dictionary") or "wanxiang_pro")
+    env.dict_name = config:get_string("translator/dictionary") or "wanxiang_pro"
+    env.dict = nil
     
     env.history_first = {}   
     env.press_count = 0      
@@ -70,23 +76,25 @@ function ForceUpperAux.init(env)
     env.on_update = function(ctx)
         ctx = ctx or env.engine.context
         if not ctx then return end
-        -- 非正常拼音输入时立刻放行，防止移动端键盘卡死
         local raw_in = ctx.input or ""
-        if raw_in == "" or not raw_in:match("^[a-zA-Z0-9]") then
-            return
-        end
-        -- 遇到转换模式或功能面板时立刻放行
-        local is_special_mode = wanxiang.s2t_conversion and wanxiang.s2t_conversion(ctx)
-        if env.is_cycling or wanxiang.is_function_mode_active(ctx) or is_special_mode then 
-            return 
-        end
-        
-        if not ctx:is_composing() then 
+
+        -- 一个完整输入周期结束后清空本周期状态，避免上一周期的“第一印象”残留。
+        if not ctx:is_composing() or raw_in == "" then
             env.history_first = {}
             env.press_count = 0
-            env.is_cycling = false 
+            env.is_cycling = false
             env.last_cand_len = 0
-            return 
+            return
+        end
+
+        -- 非正常拼音输入时立刻放行，防止移动端键盘卡死
+        if not raw_in:match("^[a-zA-Z0-9]") then
+            return
+        end
+
+        -- 遇到转换模式或功能面板时立刻放行
+        if wanxiang.is_special_mode(ctx) then
+            return
         end
         
         local parts = get_script_text_parts(ctx)
@@ -123,6 +131,7 @@ end
 function ForceUpperAux.fini(env)
     if env.update_conn then env.update_conn:disconnect() end
     env.dict = nil
+    env.dict_name = nil
     env.aux_cache = nil
     env.history_first = nil
     env.snapshot_parts = nil
@@ -139,14 +148,21 @@ function ForceUpperAux.func(key_event, env)
         return 2 
     end
     
-    -- 拦截转换状态
-    local is_special_mode = wanxiang.s2t_conversion and wanxiang.s2t_conversion(ctx)
-    if wanxiang.is_function_mode_active(ctx) or is_special_mode then 
-        return 2 
+    local current_key = key_event:repr()
+
+    -- BackSpace 优先解除锁定
+    if current_key == "BackSpace" and env.is_cycling then
+        if env.original_input ~= "" then ctx.input = env.original_input end
+        env.press_count = 0
+        env.is_cycling = false
+        return 1
     end
 
-    local current_key = key_event:repr()
-    
+    -- 拦截特殊模式
+    if wanxiang.is_special_mode(ctx) then 
+        return 2
+    end
+
     if current_key == env.trigger_key then
         if not ctx:is_composing() then return 2 end
         
@@ -214,9 +230,6 @@ function ForceUpperAux.func(key_event, env)
         if new_input ~= ctx.input then ctx.input = new_input end
         return 1 
         
-    elseif current_key == "BackSpace" and env.is_cycling then
-        if env.original_input ~= "" then ctx.input = env.original_input end
-        env.press_count = 0; env.is_cycling = false; return 1
     else
         env.press_count = 0; env.is_cycling = false; return 2 
     end

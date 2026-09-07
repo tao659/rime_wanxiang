@@ -3505,7 +3505,7 @@ dlii	戴笠乘车
 dldd	多劳多得
 dldf	颠鸾倒凤
 dldj	跺了跺脚
-dldl	掂量掂量
+dldl	掂量掂量	斗罗大陆
 dldq	颠来倒去	独揽大权
 dldu	定了定神
 dldt	点了点头
@@ -23324,3 +23324,4 @@ ubvgbj	神不知鬼不觉
 imyyjci	柴米油盐酱醋茶
 ukrubkr	是可忍孰不可忍
 ylxuh	一力降十会
+gujvy	宫商角徵羽
